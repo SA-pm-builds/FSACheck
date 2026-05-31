@@ -2,8 +2,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node"
 import Anthropic from "@anthropic-ai/sdk"
 
 const MAX_QUERY_LENGTH = 500
-const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000 // 1 hour
-const MAX_REQUESTS_PER_WINDOW = 2
+const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000 // 24 hours
+const MAX_REQUESTS_PER_WINDOW = 5
 
 const SYSTEM_PROMPT = `You are an FSA (Flexible Spending Account) and HSA (Health Savings Account) eligibility expert.
 When users ask about whether something is FSA or HSA eligible, you provide accurate, helpful guidance based on IRS Publication 502 and current FSA/HSA rules.

@@ -5,14 +5,14 @@ import { SearchBar } from "@/components/SearchBar"
 import { Sidebar } from "@/components/Sidebar"
 import { ResultCard } from "@/components/ResultCard"
 import { WelcomeScreen } from "@/components/WelcomeScreen"
+import { RateLimitBanner } from "@/components/RateLimitBanner"
 import { checkFSAEligibility } from "@/lib/anthropic"
+import { getRemainingQueries, getMsUntilReset, recordQuery, MAX_QUERIES } from "@/lib/rateLimit"
 import type { FSAResult } from "@/types/fsa"
 
 const HISTORY_KEY = "fsacheck_history"
-const RATE_LIMIT_KEY = "fsacheck_rate_limit"
-const MAX_REQUESTS = 2
 
-// Stable session ID for this browser tab — resets on page reload
+// Stable session ID for this browser tab (used by the server-side rate limiter)
 const SESSION_ID = uuidv4()
 
 function loadHistory(): FSAResult[] {
@@ -31,38 +31,13 @@ function saveHistory(history: FSAResult[]) {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(toSave.slice(-50)))
 }
 
-// Client-side rate limit counter, mirroring the server's session-based limit.
-// The server is authoritative; this just gives instant UI feedback.
-function getRemainingQueries(): number {
-  try {
-    const raw = localStorage.getItem(RATE_LIMIT_KEY)
-    if (!raw) return MAX_REQUESTS
-    const { count, sessionId } = JSON.parse(raw) as { count: number; sessionId: string }
-    // Reset if this is a new session
-    if (sessionId !== SESSION_ID) return MAX_REQUESTS
-    return Math.max(0, MAX_REQUESTS - count)
-  } catch {
-    return MAX_REQUESTS
-  }
-}
-
-function incrementQueryCount() {
-  try {
-    const raw = localStorage.getItem(RATE_LIMIT_KEY)
-    const existing = raw ? JSON.parse(raw) as { count: number; sessionId: string } : null
-    const count = existing?.sessionId === SESSION_ID ? existing.count + 1 : 1
-    localStorage.setItem(RATE_LIMIT_KEY, JSON.stringify({ count, sessionId: SESSION_ID }))
-  } catch {
-    // ignore
-  }
-}
-
 export default function App() {
   const [history, setHistory] = useState<FSAResult[]>(loadHistory)
   const [selectedId, setSelectedId] = useState<string | undefined>()
   const [isLoading, setIsLoading] = useState(false)
   const [currentResult, setCurrentResult] = useState<FSAResult | null>(null)
   const [remaining, setRemaining] = useState(getRemainingQueries)
+  const [msUntilReset, setMsUntilReset] = useState(getMsUntilReset)
   const mainRef = useRef<HTMLDivElement>(null)
 
   const handleSearch = useCallback(
@@ -85,8 +60,9 @@ export default function App() {
       setCurrentResult(newResult)
       setSelectedId(id)
       setIsLoading(true)
-      incrementQueryCount()
+      recordQuery()
       setRemaining(getRemainingQueries())
+      setMsUntilReset(getMsUntilReset())
 
       setHistory((prev) => [...prev, newResult])
       mainRef.current?.scrollTo({ top: 0, behavior: "smooth" })
@@ -187,19 +163,16 @@ export default function App() {
             )}
           </div>
 
-          {/* Remaining queries badge */}
-          <div className="text-xs text-gray-400">
-            {rateLimitReached ? (
-              <span className="rounded-full bg-red-50 px-3 py-1 text-red-600 font-medium border border-red-100">
-                Search limit reached
-              </span>
-            ) : (
-              <span className="rounded-full bg-gray-100 px-3 py-1 tabular-nums">
-                {remaining} search{remaining !== 1 ? "es" : ""} remaining
-              </span>
-            )}
-          </div>
+          {/* Remaining queries pill */}
+          {!rateLimitReached && (
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-400 tabular-nums">
+              {remaining} of {MAX_QUERIES} searches remaining today
+            </span>
+          )}
         </header>
+
+        {/* Rate limit banner — shown above search when limit is hit */}
+        {rateLimitReached && <RateLimitBanner msUntilReset={msUntilReset} />}
 
         {/* Search area */}
         <div className="border-b border-gray-200 bg-white px-6 py-4 shrink-0">
@@ -209,11 +182,6 @@ export default function App() {
             disabled={rateLimitReached}
             placeholder="e.g. 'Is sunscreen FSA eligible?' or 'Can I use FSA for therapy?'"
           />
-          {rateLimitReached && (
-            <p className="mt-2 text-xs text-red-500">
-              You've used both searches for this session. Refresh the page to start a new session.
-            </p>
-          )}
         </div>
 
         {/* Results / Welcome */}
