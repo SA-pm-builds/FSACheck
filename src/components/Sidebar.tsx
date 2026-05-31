@@ -6,6 +6,7 @@ interface SidebarProps {
   history: FSAResult[]
   onSelect: (result: FSAResult) => void
   onClear: () => void
+  onHome: () => void
   selectedId?: string
 }
 
@@ -16,13 +17,16 @@ const STATUS_ICONS = {
   unknown: { Icon: AlertCircle, class: "text-gray-400" },
 }
 
-export function Sidebar({ history, onSelect, onClear, selectedId }: SidebarProps) {
+export function Sidebar({ history, onSelect, onClear, onHome, selectedId }: SidebarProps) {
   const recentHistory = [...history].reverse()
 
   return (
     <aside className="flex h-full flex-col bg-[hsl(var(--sidebar-background))] text-[hsl(var(--sidebar-foreground))]">
       {/* Brand */}
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-[hsl(var(--sidebar-border))]">
+      <button
+        onClick={onHome}
+        className="flex items-center gap-3 px-5 py-5 border-b border-[hsl(var(--sidebar-border))] w-full text-left hover:bg-[hsl(var(--sidebar-accent))] transition-colors"
+      >
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
           <Wallet className="h-4 w-4 text-white" />
         </div>
@@ -30,7 +34,7 @@ export function Sidebar({ history, onSelect, onClear, selectedId }: SidebarProps
           <h1 className="text-sm font-semibold text-white tracking-tight">FSACheck</h1>
           <p className="text-xs text-[hsl(var(--sidebar-foreground))] opacity-60">Eligibility Lookup</p>
         </div>
-      </div>
+      </button>
 
       {/* History header */}
       <div className="flex items-center justify-between px-5 pt-5 pb-2">

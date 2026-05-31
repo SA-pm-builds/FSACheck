@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Settings, Key } from "lucide-react"
+import { Settings, Key, PlusCircle } from "lucide-react"
 import { v4 as uuidv4 } from "uuid"
 import { SearchBar } from "@/components/SearchBar"
 import { Sidebar } from "@/components/Sidebar"
@@ -135,6 +135,11 @@ export default function App() {
     setSelectedId(result.id)
   }
 
+  const handleHome = () => {
+    setCurrentResult(null)
+    setSelectedId(undefined)
+  }
+
   const handleClearHistory = () => {
     setHistory([])
     setCurrentResult(null)
@@ -157,6 +162,7 @@ export default function App() {
           history={history}
           onSelect={handleSelectHistory}
           onClear={handleClearHistory}
+          onHome={handleHome}
           selectedId={selectedId}
         />
       </div>
@@ -165,9 +171,20 @@ export default function App() {
       <div className="flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3.5 shrink-0">
-          <div>
-            <h1 className="text-sm font-semibold text-gray-900">FSA Eligibility Checker</h1>
-            <p className="text-xs text-gray-500">Powered by Claude AI</p>
+          <div className="flex items-center gap-3">
+            <div>
+              <h1 className="text-sm font-semibold text-gray-900">FSA Eligibility Checker</h1>
+              <p className="text-xs text-gray-500">Powered by Claude AI</p>
+            </div>
+            {currentResult && (
+              <button
+                onClick={handleHome}
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all"
+              >
+                <PlusCircle className="h-3.5 w-3.5" />
+                New search
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {apiKey && (
