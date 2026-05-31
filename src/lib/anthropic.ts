@@ -1,65 +1,61 @@
-import Anthropic from "@anthropic-ai/sdk"
 import type { EligibilityStatus, FSAResult } from "@/types/fsa"
 
-const SYSTEM_PROMPT = `You are an FSA (Flexible Spending Account) and HSA (Health Savings Account) eligibility expert.
-When users ask about whether something is FSA or HSA eligible, you provide accurate, helpful guidance based on IRS Publication 502 and current FSA/HSA rules.
-
-You must respond with ONLY valid JSON in this exact format:
-{
-  "status": "eligible" | "not_eligible" | "conditional",
-  "explanation": "A clear, plain English explanation of why this item is or isn't eligible (2-3 sentences)",
-  "caveats": ["caveat 1", "caveat 2"],
-  "hsaDiffers": true | false,
-  "hsaNote": "If HSA rules differ, explain how here. Otherwise omit this field."
-}
-
-Rules:
-- "eligible": Clearly FSA eligible under IRS rules
-- "not_eligible": Clearly NOT eligible (general wellness, cosmetic, etc.)
-- "conditional": Eligible only with specific conditions (prescription required, medical necessity letter, etc.)
-- "caveats": Array of important conditions, exceptions, or notes (can be empty array)
-- "hsaDiffers": true only if HSA eligibility meaningfully differs from FSA eligibility
-- Keep explanations concise and practical, avoid jargon
-- Be accurate — this is financial/medical guidance people rely on`
+export const MAX_QUERY_LENGTH = 500
 
 export async function checkFSAEligibility(
   query: string,
-  apiKey: string,
+  sessionId: string,
   onUpdate: (partial: Partial<FSAResult>) => void
 ): Promise<Partial<FSAResult>> {
-  const client = new Anthropic({
-    apiKey,
-    dangerouslyAllowBrowser: true,
+  const response = await fetch("/api/check-eligibility", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, sessionId }),
   })
 
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(body.error ?? `Request failed (${response.status})`)
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error("No response body")
+
+  const decoder = new TextDecoder()
   let fullText = ""
+  let buffer = ""
 
-  const stream = await client.messages.stream({
-    model: "claude-opus-4-8",
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Is this FSA eligible? "${query}"`,
-      },
-    ],
-  })
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
 
-  for await (const event of stream) {
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "text_delta"
-    ) {
-      fullText += event.delta.text
-      onUpdate({ isStreaming: true })
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split("\n")
+    buffer = lines.pop() ?? ""
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue
+      const payload = line.slice(6).trim()
+
+      if (payload === "[DONE]") break
+
+      try {
+        const parsed = JSON.parse(payload) as { text?: string; error?: string }
+        if (parsed.error) throw new Error(parsed.error)
+        if (parsed.text) {
+          fullText += parsed.text
+          onUpdate({ isStreaming: true })
+        }
+      } catch (e) {
+        if (e instanceof SyntaxError) continue // incomplete chunk
+        throw e
+      }
     }
   }
 
   try {
-    // Extract JSON from the response (handle potential markdown code blocks)
     const jsonMatch = fullText.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error("No JSON found in response")
+    if (!jsonMatch) throw new Error("No JSON in response")
 
     const parsed = JSON.parse(jsonMatch[0]) as {
       status: EligibilityStatus
@@ -72,7 +68,7 @@ export async function checkFSAEligibility(
     return {
       status: parsed.status,
       explanation: parsed.explanation,
-      caveats: parsed.caveats || [],
+      caveats: parsed.caveats ?? [],
       hsaDiffers: parsed.hsaDiffers,
       hsaNote: parsed.hsaNote,
       isStreaming: false,

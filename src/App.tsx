@@ -1,16 +1,19 @@
-import { useState, useRef, useEffect, useCallback } from "react"
-import { Settings, Key, PlusCircle } from "lucide-react"
+import { useState, useRef, useCallback } from "react"
+import { PlusCircle } from "lucide-react"
 import { v4 as uuidv4 } from "uuid"
 import { SearchBar } from "@/components/SearchBar"
 import { Sidebar } from "@/components/Sidebar"
 import { ResultCard } from "@/components/ResultCard"
 import { WelcomeScreen } from "@/components/WelcomeScreen"
-import { ApiKeyModal } from "@/components/ApiKeyModal"
 import { checkFSAEligibility } from "@/lib/anthropic"
 import type { FSAResult } from "@/types/fsa"
 
-const STORAGE_KEY = "fsacheck_api_key"
 const HISTORY_KEY = "fsacheck_history"
+const RATE_LIMIT_KEY = "fsacheck_rate_limit"
+const MAX_REQUESTS = 2
+
+// Stable session ID for this browser tab — resets on page reload
+const SESSION_ID = uuidv4()
 
 function loadHistory(): FSAResult[] {
   try {
@@ -24,31 +27,47 @@ function loadHistory(): FSAResult[] {
 }
 
 function saveHistory(history: FSAResult[]) {
-  // Only save completed results (not loading ones)
   const toSave = history.filter((h) => !h.isLoading && !h.isStreaming)
   localStorage.setItem(HISTORY_KEY, JSON.stringify(toSave.slice(-50)))
 }
 
+// Client-side rate limit counter, mirroring the server's session-based limit.
+// The server is authoritative; this just gives instant UI feedback.
+function getRemainingQueries(): number {
+  try {
+    const raw = localStorage.getItem(RATE_LIMIT_KEY)
+    if (!raw) return MAX_REQUESTS
+    const { count, sessionId } = JSON.parse(raw) as { count: number; sessionId: string }
+    // Reset if this is a new session
+    if (sessionId !== SESSION_ID) return MAX_REQUESTS
+    return Math.max(0, MAX_REQUESTS - count)
+  } catch {
+    return MAX_REQUESTS
+  }
+}
+
+function incrementQueryCount() {
+  try {
+    const raw = localStorage.getItem(RATE_LIMIT_KEY)
+    const existing = raw ? JSON.parse(raw) as { count: number; sessionId: string } : null
+    const count = existing?.sessionId === SESSION_ID ? existing.count + 1 : 1
+    localStorage.setItem(RATE_LIMIT_KEY, JSON.stringify({ count, sessionId: SESSION_ID }))
+  } catch {
+    // ignore
+  }
+}
+
 export default function App() {
-  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem(STORAGE_KEY) ?? "")
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
   const [history, setHistory] = useState<FSAResult[]>(loadHistory)
   const [selectedId, setSelectedId] = useState<string | undefined>()
   const [isLoading, setIsLoading] = useState(false)
   const [currentResult, setCurrentResult] = useState<FSAResult | null>(null)
+  const [remaining, setRemaining] = useState(getRemainingQueries)
   const mainRef = useRef<HTMLDivElement>(null)
-
-  const needsApiKey = !apiKey
-
-  const handleSaveApiKey = (key: string) => {
-    setApiKey(key)
-    localStorage.setItem(STORAGE_KEY, key)
-    setShowApiKeyModal(false)
-  }
 
   const handleSearch = useCallback(
     async (query: string) => {
-      if (!apiKey || isLoading) return
+      if (isLoading || remaining <= 0) return
 
       const id = uuidv4()
       const newResult: FSAResult = {
@@ -66,21 +85,15 @@ export default function App() {
       setCurrentResult(newResult)
       setSelectedId(id)
       setIsLoading(true)
+      incrementQueryCount()
+      setRemaining(getRemainingQueries())
 
-      // Add to history immediately as loading
-      setHistory((prev) => {
-        const next = [...prev, newResult]
-        return next
-      })
-
-      // Scroll to top of main area
+      setHistory((prev) => [...prev, newResult])
       mainRef.current?.scrollTo({ top: 0, behavior: "smooth" })
 
       try {
-        const result = await checkFSAEligibility(query, apiKey, (partial) => {
-          setCurrentResult((prev) =>
-            prev ? { ...prev, ...partial } : prev
-          )
+        const result = await checkFSAEligibility(query, SESSION_ID, (partial) => {
+          setCurrentResult((prev) => (prev ? { ...prev, ...partial } : prev))
         })
 
         const finalResult: FSAResult = {
@@ -97,13 +110,12 @@ export default function App() {
           return next
         })
       } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Something went wrong. Please try again."
         const errorResult: FSAResult = {
           ...newResult,
           status: "unknown",
-          explanation:
-            err instanceof Error && err.message.includes("401")
-              ? "Invalid API key. Please check your Anthropic API key and try again."
-              : "Something went wrong. Please try again.",
+          explanation: message,
           caveats: [],
           hsaDiffers: false,
           isLoading: false,
@@ -119,16 +131,8 @@ export default function App() {
         setIsLoading(false)
       }
     },
-    [apiKey, isLoading]
+    [isLoading, remaining]
   )
-
-  const handleExampleClick = (query: string) => {
-    if (!apiKey) {
-      setShowApiKeyModal(true)
-      return
-    }
-    handleSearch(query)
-  }
 
   const handleSelectHistory = (result: FSAResult) => {
     setCurrentResult(result)
@@ -147,11 +151,7 @@ export default function App() {
     localStorage.removeItem(HISTORY_KEY)
   }
 
-  // Auto-show API key modal if no key
-  useEffect(() => {
-    if (!apiKey) setShowApiKeyModal(true)
-  }, [apiKey])
-
+  const rateLimitReached = remaining <= 0
   const showWelcome = !currentResult
 
   return (
@@ -186,43 +186,43 @@ export default function App() {
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {apiKey && (
-              <button
-                onClick={() => setShowApiKeyModal(true)}
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all"
-              >
-                <Key className="h-3 w-3" />
-                API Key
-              </button>
+
+          {/* Remaining queries badge */}
+          <div className="text-xs text-gray-400">
+            {rateLimitReached ? (
+              <span className="rounded-full bg-red-50 px-3 py-1 text-red-600 font-medium border border-red-100">
+                Search limit reached
+              </span>
+            ) : (
+              <span className="rounded-full bg-gray-100 px-3 py-1 tabular-nums">
+                {remaining} search{remaining !== 1 ? "es" : ""} remaining
+              </span>
             )}
-            <button
-              onClick={() => setShowApiKeyModal(true)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
           </div>
         </header>
 
         {/* Search area */}
         <div className="border-b border-gray-200 bg-white px-6 py-4 shrink-0">
           <SearchBar
-            onSearch={apiKey ? handleSearch : () => setShowApiKeyModal(true)}
+            onSearch={handleSearch}
             isLoading={isLoading}
+            disabled={rateLimitReached}
             placeholder="e.g. 'Is sunscreen FSA eligible?' or 'Can I use FSA for therapy?'"
           />
+          {rateLimitReached && (
+            <p className="mt-2 text-xs text-red-500">
+              You've used both searches for this session. Refresh the page to start a new session.
+            </p>
+          )}
         </div>
 
         {/* Results / Welcome */}
         <div ref={mainRef} className="flex-1 overflow-y-auto">
           {showWelcome ? (
-            <WelcomeScreen onExampleClick={handleExampleClick} />
+            <WelcomeScreen onExampleClick={handleSearch} disabled={rateLimitReached} />
           ) : (
             <div className="mx-auto max-w-2xl px-6 py-6">
               {currentResult && <ResultCard result={currentResult} />}
-
-              {/* Previous results hint */}
               {history.filter((h) => h.id !== currentResult?.id && !h.isLoading).length > 0 && (
                 <p className="mt-6 text-center text-xs text-gray-400">
                   ← Browse previous searches in the sidebar
@@ -232,11 +232,6 @@ export default function App() {
           )}
         </div>
       </div>
-
-      {/* API Key Modal */}
-      {(showApiKeyModal || needsApiKey) && (
-        <ApiKeyModal onSave={handleSaveApiKey} />
-      )}
     </div>
   )
 }

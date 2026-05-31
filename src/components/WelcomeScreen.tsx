@@ -4,6 +4,7 @@ import type { LucideIcon } from "lucide-react"
 
 interface WelcomeScreenProps {
   onExampleClick: (query: string) => void
+  disabled?: boolean
 }
 
 // One icon per query, matched by index to EXAMPLE_QUERIES
@@ -18,7 +19,7 @@ const QUERY_ICONS: LucideIcon[] = [
   Eye,       // "Is LASIK surgery FSA eligible?"
 ]
 
-export function WelcomeScreen({ onExampleClick }: WelcomeScreenProps) {
+export function WelcomeScreen({ onExampleClick, disabled }: WelcomeScreenProps) {
   return (
     <div className="flex flex-col items-center justify-center h-full px-4 py-12 text-center">
       {/* Hero text */}
@@ -43,8 +44,9 @@ export function WelcomeScreen({ onExampleClick }: WelcomeScreenProps) {
             return (
               <button
                 key={query}
-                onClick={() => onExampleClick(query)}
-                className="group flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left text-sm text-gray-700 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50/50 hover:shadow hover:text-gray-900"
+                onClick={() => !disabled && onExampleClick(query)}
+                disabled={disabled}
+                className="group flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left text-sm text-gray-700 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50/50 hover:shadow hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-gray-200 disabled:hover:bg-white disabled:hover:shadow-sm"
               >
                 <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-100 group-hover:bg-blue-100 transition-colors">
                   <Icon className="h-3.5 w-3.5 text-gray-500 group-hover:text-blue-600 transition-colors" />
